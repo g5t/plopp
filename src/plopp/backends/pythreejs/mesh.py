@@ -51,25 +51,27 @@ class Mesh:
             )
         if (t := self._check_intensity_type(data)) != self._type:
             raise ValueError(f'Mesh intensity type expected to match {self._type} but is {t}')
+        return data
 
     def _check_face_dims(self, faces: sc.Variable):
         """Ensure that the provided face indexing makes sense"""
-        if self._faces.ndim == 1:
-            if self._faces.dim != self._triangle or self._faces.sizes[self._triangle] != 3:
+        if faces.ndim == 1:
+            if faces.dim != self._triangle or faces.sizes[self._triangle] != 3:
                 raise ValueError('Mesh triangulation must contain at least one triangle')
-            self._faces = self._faces.fold(dim=self._triangle, sizes={self._face: 1, self._triangle: 3})
+            faces = faces.fold(dim=self._triangle, sizes={self._face: 1, self._triangle: 3})
 
-        if self._faces.ndim != 2:
+        if faces.ndim != 2:
             raise ValueError(f'Mesh triangulation expected to be 2-dimensional but has {self._faces.ndim} dimensions')
 
-        if any(x not in self._faces.dims for x in (self._face, self._triangle)):
+        if any(x not in faces.dims for x in (self._face, self._triangle)):
             raise ValueError(
-                f'Mesh triangulation expected to have dims {(self._face, self._triangle)} but has {self._faces.dims}'
+                f'Mesh triangulation expected to have dims {(self._face, self._triangle)} but has {faces.dims}'
             )
-        if self._faces.sizes[self._triangle] != 3:
+        if faces.sizes[self._triangle] != 3:
             raise ValueError(
-                f'Mesh triangulation expected 3 indexes per face but provided {self._faces.sizes[self._triangle]}'
+                f'Mesh triangulation expected 3 indexes per face but provided {faces.sizes[self._triangle]}'
             )
+        return faces
 
     """
     Artist to represent a three-dimensional plot of intensity on a regular triangulated mesh.
@@ -120,11 +122,8 @@ class Mesh:
         self._triangle = triangle
 
         self._type = self._check_intensity_type(data)
-        self._check_data_dims(data)
-        self._check_face_dims(faces)
-
-        self._data = data
-        self._faces = faces
+        self._data = self._check_data_dims(data)
+        self._faces = self._check_face_dims(faces)
 
         self._id = uuid.uuid4().hex
 
@@ -194,8 +193,7 @@ class Mesh:
         new_values:
             New data to update the mesh values from.
         """
-        self._check_data_dims(new_values)
-        self._data = new_values
+        self._data = self._check_data_dims(new_values)
         # plus update the vertex positions (should we check that they've actually changed?)
         vertices = self._data.data.transpose(dims=[self._vertex, self._point]).flatten(to='vertices')
         self.geometry.attributes['position'].array = vertices.values.astype('float32')
@@ -230,9 +228,12 @@ class Mesh:
     @property
     def data(self):
         """
-        Get the mesh data.
+        Get the mesh _intensity_ data.
+
+        Used by plopp.ColorMapper._set_artists_colors to map plot-data into
+        color range, then passed back to this class' set_colors method.
         """
-        return self._data
+        return sc.DataArray(data=self._data.coords[self._intensity], masks=self._data.masks)
 
 
 

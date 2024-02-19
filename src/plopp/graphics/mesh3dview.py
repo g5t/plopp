@@ -23,7 +23,7 @@ class Mesh3dView(View):
     *nodes:
         The nodes that are attached to the view.
     faces:
-        The triangulated faced indexes that connect the vertex points
+        The triangulated faced indexes that connect the vertices
     point:
         The name of the point dimension in the data (will be determined if None)
     vertex:
@@ -83,12 +83,8 @@ class Mesh3dView(View):
         if faces is None:
             raise ValueError('The triangulated faces must be provided')
 
-        self._faces = faces
-        self._point = point
-        self._vertex = vertex
-        self._intensity = intensity
-        self._face = face
-        self._triangle = triangle
+        self._bkargs = {'faces': faces, 'point': point, 'vertex': vertex, 'intensity': intensity,
+                        'face': face, 'triangle': triangle}
         self._kwargs = kwargs
 
         self.canvas = backends.canvas3d(figsize=figsize, title=title, camera=camera)
@@ -118,30 +114,25 @@ class Mesh3dView(View):
         draw:
             This argument is ignored for the 3d figure update.
         """
-        # mapping = {'x': self._x, 'y': self._y, 'z': self._z}
         axes = ('x', 'y', 'z')
+        intensity = self._bkargs['intensity']
         if self.canvas.empty:
             self.canvas.set_axes(
                 dims={a: a for a in axes},
                 units={a: new_values.data.unit for a in axes},
             )
-            self.colormapper.unit = new_values.coords[self._intensity].unit
+            self.colormapper.unit = new_values.coords[intensity].unit
         else:
-            new_values.coords[self._intensity] = make_compatible(
-                new_values.coords[self._intensity], unit=self.colormapper.unit
+            new_values.coords[intensity] = make_compatible(
+                new_values.coords[intensity], unit=self.colormapper.unit
             )
             # the data field is vector valued, so we only need to worry about x, y, or z
             new_values.data = new_values.data.to(unit=self.canvas.units['x'], copy=False)
 
         if key not in self.artists:
-            pts = backends.mesh(
-                data=new_values, faces=self._faces,
-                point=self._point, vertex=self._vertex, intensity=self._intensity,
-                face=self._face, triangle=self._triangle,
-                **self._kwargs
-            )
+            pts = backends.mesh(data=new_values, **self._bkargs, **self._kwargs)
             self.artists[key] = pts
-            self.colormapper[key] = pts
+            self.colormapper[key] = pts  # inserts into self.colormapper.artists
             self.canvas.add(pts.points)
             if key in self._original_artists:
                 self.canvas.make_outline(limits=self.get_limits())
@@ -151,33 +142,18 @@ class Mesh3dView(View):
 
     def get_limits(self) -> Tuple[sc.Variable, sc.Variable, sc.Variable]:
         """
-        Get global limits for all the point clouds in the scene.
+        Get global limits for all the mesh clouds in the scene.
         """
-        xmin = None
-        xmax = None
-        ymin = None
-        ymax = None
-        zmin = None
-        zmax = None
-        for child in self.artists.values():
-            xlims, ylims, zlims = child.get_limits()
-            if xmin is None or xlims[0] < xmin:
-                xmin = xlims[0]
-            if xmax is None or xlims[1] > xmax:
-                xmax = xlims[1]
-            if ymin is None or ylims[0] < ymin:
-                ymin = ylims[0]
-            if ymax is None or ylims[1] > ymax:
-                ymax = ylims[1]
-            if zmin is None or zlims[0] < zmin:
-                zmin = zlims[0]
-            if zmax is None or zlims[1] > zmax:
-                zmax = zlims[1]
-        return (
-            sc.concat([xmin, xmax], dim=self._x),
-            sc.concat([ymin, ymax], dim=self._y),
-            sc.concat([zmin, zmax], dim=self._z),
-        )
+        # use zip to go from a list of tuples to a tuple of lists, then make a dict
+        axes = 'x', 'y', 'z'
+        limits = {k: sc.concat(v, dim='children') for k, v in zip(
+            axes, zip(*[child.get_limits() for child in self.artists.values()])
+        )}
+
+        def limit_pair(ax: str) -> sc.Variable:
+            return sc.concat((sc.min(limits[ax]), sc.max(limits[ax])), dim=ax)
+
+        return limit_pair(axes[0]), limit_pair(axes[1]), limit_pair(axes[2])
 
     def set_opacity(self, alpha: float):
         """

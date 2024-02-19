@@ -10,3 +10,4 @@ from .slicer import slicer
 from .superplot import superplot
 from .xyplot import xyplot
 from .cylinders3d import cylinders3d
+from .mesh3d import mesh3d

@@ -48,7 +48,7 @@ def triangulate(*, at: sc.Variable, to: sc.Variable, edge: sc.Variable,
         last = len(vertices) - 1
         top = [[last, last - (i + 1) % elements - 1, last - i - 1] for i in range(elements)]
         faces.extend(top)
-    return vertices, array(values=np.array(faces), dims=['faces', 'triangle'])
+    return vertices, array(values=np.array(faces), dims=['face', 'triangle'])
 
 
 # def triangulate_all(data, segments: int = 6, caps: bool = True, twist: bool = False):
@@ -84,13 +84,14 @@ def cylinders(npoints=100, scale=10.0, seed=1) -> sc.DataGroup:
         A DataGroup with intensity 'data', cylinder indexing, and NXcylindrical_geometry vertices
     """
     rng = np.random.default_rng(seed)
-    base = sc.vectors(dims=['cylinder'], unit='m', values=scale * rng.standard_normal(size=[npoints, 3]))
-    length = sc.vectors(dims=['cylinder'], unit='m', values=scale * rng.standard_normal(size=[npoints, 3]))
-    radius = sc.array(dims=['cylinder'], unit='m', values=rng.standard_normal(size=[npoints]))
+    dims=['cylinder']
+    base = sc.vectors(dims=dims, unit='m', values=scale * rng.standard_normal(size=[npoints, 3]))
+    length = sc.vectors(dims=dims, unit='m', values=scale * rng.standard_normal(size=[npoints, 3]))
+    radius = sc.array(dims=dims, unit='m', values=rng.standard_normal(size=[npoints]))
     v = sc.cross(sc.vector(value=[0, 1, 0]), length / sc.sqrt(sc.dot(length, length)))
     vertices = sc.concat((base, base + v * radius, base + length), dim='vertices').transpose().flatten(to='vertices')
     cyl = sc.arange(start=0, stop=3 * npoints, dim='flat').fold(dim='flat', sizes={'cylinder': npoints, 'index': 3})
-    intensity = sc.array(dims=['cylinder'], unit='counts', values=rng.standard_normal(size=[npoints]))
+    intensity = sc.array(dims=dims, unit='counts', values=rng.standard_normal(size=[npoints]))
     return sc.DataGroup(data=intensity, cylinders=cyl, vertices=vertices)
 
 
@@ -120,7 +121,7 @@ def cylinder(radius, length) -> sc.DataGroup:
     return sc.DataGroup(data=intensity, cylinders=cyl, vertices=vertices)
 
 
-def cylinders_to_mesh(data: sc.DataGroup) -> tuple[sc.DataArray, sc.Variable]:
+def cylinders_to_mesh(data: sc.DataGroup) -> tuple[sc.DataArray, sc.Variable, dict[str, str]]:
     """Convert from NXCylindrical geometry to full-rank vertex information"""
     # nx_vertices contains any number of vertices, indexed by a (N_cylinders, 3) array, nx_cylinders
     # where max(nx_cylinders) < nx_vertices.shape[0]
@@ -149,7 +150,7 @@ def cylinders_to_mesh(data: sc.DataGroup) -> tuple[sc.DataArray, sc.Variable]:
     #       approximate a circle and whether the cylinder end caps are to be triangulated
     # faces is (N_faces(has_caps, segments), 3)
     #       where N_faces is a constant defined by the number of segments, etc.
-    non_cylinder = [x for x in vertices.dims if x is not data_dim]
+    non_cylinder = [x for x in vertices.dims if x != data_dim]
     assert len(non_cylinder) == 1
     n_vertices = vertices.sizes[non_cylinder[0]]
 
@@ -157,16 +158,32 @@ def cylinders_to_mesh(data: sc.DataGroup) -> tuple[sc.DataArray, sc.Variable]:
     # applies to one cylinder, which has some number of vertices.
     mesh = sc.DataArray(data=vertices, coords={'intensity': data['data']})
 
-    return mesh, faces
+    return mesh, faces, {'point': data_dim, 'vertex': non_cylinder[0], 'intensity': 'intensity'}
+
+
+def make_single_cylinder3d(**kwargs):
+    dg = cylinder(0.1, 2)
+    mesh, faces, names = cylinders_to_mesh(dg)
+    return pp.mesh3d(mesh, faces, **names, **kwargs)
+
+
+def make_multiple_cylinder3d(*args, **kwargs):
+    dg = cylinders(*args)
+    mesh, faces, names = cylinders_to_mesh(dg)
+    return pp.mesh3d(mesh, faces, **names, **kwargs)
 
 
 def test_single_cylinder3d():
-    dg = cylinder(0.1, 2)
-    mesh, faces = cylinders_to_mesh(dg)
-    pp.mesh3d(mesh, faces)
+    try:
+        make_single_cylinder3d()
+        assert True
+    except ValueError:
+        assert False
 
 
 def test_multiple_cylinder3d():
-    dg = cylinders()
-    mesh, faces = cylinders_to_mesh(dg)
-    pp.mesh3d(mesh, faces)
+    try:
+        make_multiple_cylinder3d()
+        assert True
+    except ValueError:
+        assert False

@@ -20,30 +20,35 @@ def _to_variable(
 
 def _preprocess_mesh(
     obj: PlottableMulti,
-    x: Union[str, sc.Variable],
-    y: Union[str, sc.Variable],
-    z: Union[str, sc.Variable],
-    mesh: Union[str, sc.Variable],
-    name: Optional[str] = None,
+    point: str,
+    vertex: str,
+    intensity: str | sc.Variable,
+    mesh: sc.Variable,
+    face: str,
+    triangle: str,
+    name: str | None = None,
 ) -> sc.DataArray:
     da = from_compatible_lib(obj)
     check_not_binned(da)
 
-    if mesh is not None:
-        pos = _to_variable(mesh, coords=da.coords)
-        coords = {
-            x: pos.fields.x,
-            y: pos.fields.y,
-            z: pos.fields.z,
-        }
+    if any(x not in da.data.dims for x in (point, vertex)):
+        raise ValueError(f"Expected {point} and {vertex} but got {da.data.dims}")
+    if isinstance(intensity, str):
+        intensity_name = intensity
+        intensity = da.coords[intensity_name]
     else:
-        coords = {k: _to_variable(k, coords=da.coords) for k in (x, y, z)}
+        intensity_name = 'counts'
+    if any(x not in (point, vertex) for x in intensity.dims):
+        raise ValueError(f"Expected only {point} or {vertex} dims but got {intensity.dims}")
 
+    coords = {intensity_name: intensity}
     out = sc.DataArray(data=da.data, masks=da.masks, coords=coords)
-    if out.ndim != 1:
-        out = out.flatten(to=uuid.uuid4().hex)
     if name is not None:
         out.name = name
+
+    if any(x not in mesh.dims for x in (face, triangle)):
+        raise ValueError(f"Expected {face} and {triangle} but got {mesh.dims}")
+
     return out
 
 
@@ -51,10 +56,11 @@ def mesh3d(
     obj: PlottableMulti,
     faces: sc.Variable,
     *,
-    x: str | None = 'x',
-    y: str | None = 'y',
-    z: str | None = 'z',
-    mesh: str | None = None,
+    point: str = 'polyhedron',
+    vertex: str = 'vertex',
+    intensity: str = 'counts',
+    face: str = 'face',
+    triangle: str = 'triangle',
     figsize: Tuple[int, int] = (600, 400),
     norm: Literal['linear', 'log'] = 'linear',
     title: str = None,
@@ -81,14 +87,16 @@ def mesh3d(
         The data array containing the data and the coordinates.
     faces:
         The triangulated face indexes for the data and coordinates
-    x:
-        The name of the coordinate that is to be used for the X positions.
-    y:
-        The name of the coordinate that is to be used for the Y positions.
-    z:
-        The name of the coordinate that is to be used for the Z positions.
-    mesh:
-        The name of the vector coordinate that is to be used for the positions.
+    point:
+        The name of the polyhedron 'point' dimension in the data array data field
+    vertex:
+        The name of the vertex positions dimension for the data array data field
+    intensity:
+        The name of the intensity coordinate for the data array
+    face:
+        The name of the face dimension for the faces variable
+    triangle:
+        The name of the triangle dimension for the faces variable
     norm:
         Set to ``'log'`` for a logarithmic colorscale.
     figsize:
@@ -120,15 +128,13 @@ def mesh3d(
         )
 
     nodes = input_to_nodes(
-        obj, processor=partial(_preprocess_mesh, x=x, y=y, z=z, mesh=mesh)
+        obj, processor=partial(_preprocess_mesh,
+                               point=point, vertex=vertex, intensity=intensity,
+                               mesh=faces, face=face, triangle=triangle)
     )
 
     fig = figure3d(
         *nodes,
-        faces=faces,
-        x=x,
-        y=y,
-        z=z,
         figsize=figsize,
         norm=norm,
         title=title,
@@ -137,6 +143,12 @@ def mesh3d(
         cmap=cmap,
         camera=camera,
         style='mesh',
+        faces=faces,
+        point=point,
+        vertex=vertex,
+        intensity=intensity,
+        face=face,
+        triangle=triangle,
         **kwargs,
     )
     tri_cutter = TriCutTool(fig)
