@@ -86,20 +86,7 @@ class Cylinders:
         )
         self.points = p3.Mesh(geometry=self.geometry, material=self.material)
 
-    def triangulate_all(self):
-        """Combine all triangulations as scipp Variables, where possible"""
-        from scipp import array, arange, flatten, transpose
-        bases, edges, fars = (self._data.coords[name] for name in (self._base, self._edge, self._far))
-        x = bases.dims[0]
-        vertices, faces = triangulate(at=bases, to=fars, edge=edges, elements=self._segments, caps=self._caps, twist=self._twist)
-        # vertices now has shape (cylinders, vertices), which we will flatten to only vertices
-        # first we need to expand faces:
-        count = vertices.sizes['vertices']
-        first = arange(start=0, stop=bases.sizes[x], dim=x) * count
-        faces = first + array(values=faces, dims=['faces', 'vertices'])
-        return (flatten(transpose(vertices, dims=[x, 'vertices']), to='vertices'),
-                flatten(transpose(faces, dims=[x,  'faces', 'vertices']), dims=[x, 'faces'], to='faces'),
-                first + count, count)
+
 
     def make_geometry(self):
         """Construct the geometry from combined scipp Variables using the buffered index property"""
@@ -175,52 +162,5 @@ class Cylinders:
         return self._data
 
 
-def triangulate(*, at: sc.Variable, to: sc.Variable, edge: sc.Variable,
-                elements: int = 6, rings: int = 1, unit: str | None = None, caps: bool = True,
-                twist: bool = True):
-    from scipp import sqrt, dot, arange, concat, flatten, fold, vectors, cross, Variable
-    from scipp.spatial import rotations_from_rotvecs
-    from numpy import array, tile
-    if unit is None:
-        unit = at.unit or 'm'
 
-    l_vec = to.to(unit=unit) - at.to(unit=unit)
-    ll = sqrt(dot(l_vec, l_vec))
-    # *a* vector perpendicular to l (should we check that this _is_ perpendicular to l_vec?)
-    p = edge.to(unit=unit) - at.to(unit=unit)
-
-    # arange does _not_ include the stop value, by design
-    a = arange(start=0., stop=360., step=360/elements, dim='ring', unit='degree')
-    temp_dim = uuid.uuid4().hex
-    full_a = a * l_vec / ll
-    ring = fold(rotations_from_rotvecs(flatten(full_a, dims=full_a.dims, to=temp_dim)), dim=temp_dim, sizes=full_a.sizes) * p
-    li = at.to(unit=unit) + arange(start=0, stop=rings + 1, dim='length') * l_vec / rings
-    if twist:
-        # twists = Variable(values=tile(array([0, 180/elements]), (rings + 1) // 2), dims=['length'], unit='degree')
-        twists = arange(start=0., stop=rings+1, step=1, dim='length', unit='degree') * (-180 / elements)
-        full_t = twists * l_vec / ll
-        r_twist = fold(rotations_from_rotvecs(flatten(full_t, dims=full_t.dims, to=temp_dim)), dim=temp_dim, sizes=full_t.sizes)
-        ring = r_twist * ring
-
-    vertices = flatten(li + ring, dims=['length', 'ring'], to='vertices')  # the order in the addition is important
-    if caps:
-        # 0, elements*[0,elements), elements*elements + 1
-        vertices = concat((at.to(unit=unit), vertices, to.to(unit=unit)), 'vertices')
-    faces = []
-    if caps:
-        # bottom cap
-        faces = [[0, (i + 1) % elements + 1, i + 1] for i in range(elements)]
-    # between rings
-    for j in range(rings):
-        z = 1 + j * elements if caps else j * elements
-        rf = [[[z + i, z + (i + 1) % elements, z + (i + 1) % elements + elements],
-               [z + i, z + (i + 1) % elements + elements, z + i + elements]] for i in range(elements)]
-        faces.extend([triangle for triangles in rf for triangle in triangles])
-    if caps:
-        # top cap
-        last = len(vertices) - 1
-        top = [[last, last - (i + 1) % elements - 1, last - i - 1] for i in range(elements)]
-        faces.extend(top)
-    faces = array(faces, dtype=int)
-    return vertices, faces
 
