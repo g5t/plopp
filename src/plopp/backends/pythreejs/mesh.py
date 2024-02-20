@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2023 Scipp contributors (https://github.com/scipp)
+# Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 
 import uuid
 from typing import Tuple
@@ -173,8 +173,8 @@ class Mesh:
         elif self.IntensityType.point == self._type:
             if (no := len(self.last_vertex)) != rgba.shape[0]:
                 raise ValueError(f"Wrong number of colors ({rgba.shape[0]}) to set for {no} polyhedra")
-            colors = array(values=rgba[:, :3], dims=['poly', 'rgb']) * ones(shape=[self.vertex_count], dims=['vertex'])
-            colors = flatten(transpose(colors, dims=['poly', 'vertex', 'rgb']), dims=['poly', 'vertex'], to='v').values
+            colors = array(values=rgba[:, :3], dims=['p', 'rgb']) * ones(shape=[self.vertex_count], dims=['vertex'])
+            colors = colors.transpose(dims=['p', 'vertex', 'rgb']).flatten(dims=['p', 'vertex'], to='v').values
         elif self.IntensityType.vertex == self._type:
             if (no := self.vertex_count) != rgba.shape[0]:
                 raise ValueError(f"Wrong number of colors ({rgba.shape[0]}) to set for {no} vertices")
@@ -240,6 +240,13 @@ class Mesh:
         """
         return sc.DataArray(data=self._data.coords[self._intensity], masks=self._data.masks)
 
+    @property
+    def raw_data(self):
+        """
+        Get the mesh _intensity_ data
 
+        Used by plopp.ColorMapper.autoscale to set the color-axis limits
+        """
+        return self.data
 
 

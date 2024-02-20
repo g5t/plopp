@@ -25,13 +25,6 @@ class PythreejsBackend:
 
         return PointCloudP3js(*args, **kwargs)
 
-    def cylinders(self, *args, **kwargs):
-        """
-        See :class:`cylinders.Cylinders` for details.
-        """
-        from .cylinders import Cylinders as CylindersP3js
-        return CylindersP3js(*args, **kwargs)
-
     def mesh(self, *args, **kwargs):
         """
         See :class:`mesh.Mesh` for details.

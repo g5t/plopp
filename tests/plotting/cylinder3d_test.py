@@ -206,7 +206,7 @@ def make_two_cylinder3d(**kwargs):
                       vertices=sc.concat((dg1['vertices'], dg2['vertices']), dim='vertices')
                       )
     mesh, faces, names = cylinders_to_mesh(dg)
-    return pp.mesh3d(mesh, faces)
+    return pp.mesh3d(mesh, faces, **names)
 
 
 def make_multiple_cylinder3d(*args, **kwargs):
