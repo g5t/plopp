@@ -140,9 +140,9 @@ class Mesh:
         """Construct the geometry from combined scipp Variables using the buffered index property"""
         from pythreejs import BufferGeometry, BufferAttribute
         from numpy import zeros
-        from scipp import arange, flatten
+        from scipp import arange
         # ensuring the vertex dimension is first keeps the vertices-per-point contiguous after flattening
-        vertices = self._data.data.transpose(dims=[self._vertex, self._point]).flatten(to='vertices')
+        vertices = self._data.data.transpose(dims=[self._point, self._vertex]).flatten(to='vertices')
         # The _first_ vertex index for each polyhedron in the list of all vertices
         first = arange(start=0, stop=self._data.sizes[self._point], dim=self._point) * self._data.sizes[self._vertex]
         # The face indexes need to be scaled-up to the full vertex list
@@ -152,7 +152,7 @@ class Mesh:
         count = self._data.sizes[self._vertex]
 
         position = BufferAttribute(array=vertices.values.astype('float32'))
-        color = BufferAttribute(array=zeros([vertices.sizes['vertices'], 3], dtype='float32'))
+        color = BufferAttribute(array=zeros([count, 3], dtype='float32'))
         index = BufferAttribute(array=faces.values.flatten().astype('uint32'))  # *MUST* be unsigned!
         return count, last, BufferGeometry(index=index, attributes={'position': position, 'color': color})
 
@@ -188,6 +188,11 @@ class Mesh:
         """
         Update mesh array with new values.
 
+        Warning
+        -------
+        This method _is_ called when a mesh is _first_ drawn, and can therefore make debugging changes in
+        the make_geometry() method challenging.
+
         Parameters
         ----------
         new_values:
@@ -195,7 +200,7 @@ class Mesh:
         """
         self._data = self._check_data_dims(new_values)
         # plus update the vertex positions (should we check that they've actually changed?)
-        vertices = self._data.data.transpose(dims=[self._vertex, self._point]).flatten(to='vertices')
+        vertices = self._data.data.transpose(dims=[self._point, self._vertex]).flatten(to='vertices')
         self.geometry.attributes['position'].array = vertices.values.astype('float32')
 
     def get_limits(self) -> Tuple[sc.Variable, sc.Variable, sc.Variable]:
