@@ -5,7 +5,7 @@ import numpy as np
 
 def triangulate(*, at: sc.Variable, to: sc.Variable, edge: sc.Variable,
                 elements: int = 6, rings: int = 1, unit: str | None = None, caps: bool = True,
-                twist: bool = True):
+                twist: bool = False):
     from scipp import sqrt, dot, arange, concat, flatten, fold, array
     from scipp.spatial import rotations_from_rotvecs
     import uuid
@@ -84,22 +84,43 @@ def cylinders(npoints=100, scale=10.0, seed=1) -> sc.DataGroup:
         A DataGroup with intensity 'data', cylinder indexing, and NXcylindrical_geometry vertices
     """
     rng = np.random.default_rng(seed)
-    dims=['cylinder']
-    base = sc.vectors(dims=dims, unit='m', values=scale * rng.standard_normal(size=[npoints, 3]))
-    length = sc.vectors(dims=dims, unit='m', values=scale * rng.standard_normal(size=[npoints, 3]))
-    radius = sc.array(dims=dims, unit='m', values=rng.standard_normal(size=[npoints]))
-    v = sc.cross(sc.vector(value=[0, 1, 0]), length / sc.sqrt(sc.dot(length, length)))
-    vertices = sc.concat((base, base + v * radius, base + length), dim='vertices').transpose().flatten(to='vertices')
-    cyl = sc.arange(start=0, stop=3 * npoints, dim='flat').fold(dim='flat', sizes={'cylinder': npoints, 'index': 3})
+    # all randomly generated values share the 'points' dimension
+    dims = ['cylinder']
+    # intensity to give different colors for each cylinder
     intensity = sc.array(dims=dims, unit='counts', values=rng.standard_normal(size=[npoints]))
+    # base is the center of one end-cap
+    base = sc.vectors(dims=dims, unit='m', values=scale * rng.standard_normal(size=[npoints, 3]))
+    # length is the length of the cylinder symmetric axis
+    length = sc.vectors(dims=dims, unit='m', values=scale * rng.standard_normal(size=[npoints, 3]))
+    # radius is the distance from the cylinder axis to the cylinder wall
+    radius = sc.array(dims=dims, unit='m', values=rng.standard_normal(size=[npoints]))
+    # find a vector perpendicular to the cylinder axis
+    v = sc.cross(sc.vector(value=[0, 1, 0]), length / sc.sqrt(sc.dot(length, length)))
+    if sc.allclose(sc.dot(v, v), sc.scalar(0.)):
+        # length _is_ [0, 1, 0]
+        v = sc.vector(value=[1, 0, 0])
+    v /= sc.sqrt(sc.dot(v, v))
+    # combine the characteristic vertices
+    vertices = sc.concat((base, base + v * radius, base + length), dim='vertices').transpose().flatten(to='vertices')
+    # and their structured indices
+    cyl = sc.arange(start=0, stop=3 * npoints, dim='flat').fold(dim='flat', sizes={'cylinder': npoints, 'index': 3})
+
     return sc.DataGroup(data=intensity, cylinders=cyl, vertices=vertices)
 
 
-def cylinder(radius, length) -> sc.DataGroup:
+def cylinder(radius, length, position=None, axis=None, offset=0, counts=1) -> sc.DataGroup:
     """
     Generate a single cylinder
     Parameters
     ----------
+    counts:
+        The intensity signal, allow for setting the color indirectly
+    offset:
+        The index offset
+    axis:
+        The symmetry axis direction of the cylinder
+    position:
+        The position of the center of one face of the cylinder
     radius:
         The radius of the generated cylinder
     length:
@@ -109,19 +130,28 @@ def cylinder(radius, length) -> sc.DataGroup:
     -------
         A DataGroup with intensity 'data', cylinder indexing, and NXcylindrical_geometry vertices of a single cylinder
     """
-    base = sc.vectors(dims=['cylinder'], unit='m', values=[[0, 0, 0]])
+    if position is None:
+        position = [0, 0, 0]
+    if axis is None:
+        axis = [0, 0, 1]
+    axis = sc.vector(value=axis)
+    x = sc.vector(value=[1, 0, 0])
+    y = sc.vector(value=[0, 1, 0])
+    perp = x if sc.allclose(sc.cross(axis, y), sc.vector(value=[0., 0, 0])) else sc.cross(axis, y) / sc.sqrt(sc.dot(axis, axis))
+
+    base = sc.vectors(dims=['cylinder'], unit='m', values=[position])
     radius = sc.array(dims=['cylinder'], unit='m', values=[radius])
     length = sc.array(dims=['cylinder'], unit='m', values=[length])
-    vertices = sc.concat((base,
-                          base + radius * sc.vector(value=[0, 1, 0]),
-                          base + length * sc.vector(value=[0, 0, 1])),
-                         dim='vertices').transpose().flatten(to='vertices')
-    cyl = sc.arange(start=0, stop=3, dim='flat').fold(dim='flat', sizes={'cylinder': 1, 'index': 3})
-    intensity = sc.array(dims=['cylinder'], unit='counts', values=[1])
+    vertices = (
+        sc.concat((base, base + radius * perp, base + length * axis), dim='vertices').transpose()
+        .flatten(to='vertices')
+        )
+    cyl = sc.arange(start=0, stop=3, dim='flat').fold(dim='flat', sizes={'cylinder': 1, 'index': 3}) + offset
+    intensity = sc.array(dims=['cylinder'], unit='counts', values=[counts])
     return sc.DataGroup(data=intensity, cylinders=cyl, vertices=vertices)
 
 
-def cylinders_to_mesh(data: sc.DataGroup) -> tuple[sc.DataArray, sc.Variable, dict[str, str]]:
+def cylinders_to_mesh(data: sc.DataGroup, **kwargs) -> tuple[sc.DataArray, sc.Variable, dict[str, str]]:
     """Convert from NXCylindrical geometry to full-rank vertex information"""
     # nx_vertices contains any number of vertices, indexed by a (N_cylinders, 3) array, nx_cylinders
     # where max(nx_cylinders) < nx_vertices.shape[0]
@@ -143,7 +173,7 @@ def cylinders_to_mesh(data: sc.DataGroup) -> tuple[sc.DataArray, sc.Variable, di
 
     # convert from characteristic vertices to an N-polygon representation
     # and return the regular face indexes that apply to any cylinder's vertices
-    vertices, faces = triangulate(at=at, to=to, edge=edge)
+    vertices, faces = triangulate(at=at, to=to, edge=edge, **kwargs)
 
     # vertices _should_ be (N_cylinders, N_vertices(has_caps, segments))
     #       where N_vertices is a constant defined by the number of segments used to
@@ -165,6 +195,18 @@ def make_single_cylinder3d(**kwargs):
     dg = cylinder(0.1, 2)
     mesh, faces, names = cylinders_to_mesh(dg)
     return pp.mesh3d(mesh, faces, **names, **kwargs)
+
+
+def make_two_cylinder3d(**kwargs):
+    dg1 = cylinder(0.1, 1, position=[1, 0, 0], axis=[0, 0, 1], counts=1)
+    dg2 = cylinder(radius=0.2, length=2, position=[0, 2, 0], axis=[0, -1, 0], counts=2,
+                   offset=dg1['vertices'].sizes['vertices'])
+    dg = sc.DataGroup(data=sc.concat((dg1['data'], dg2['data']), dim='cylinder'),
+                      cylinders=sc.concat((dg1['cylinders'], dg2['cylinders']), dim='cylinder'),
+                      vertices=sc.concat((dg1['vertices'], dg2['vertices']), dim='vertices')
+                      )
+    mesh, faces, names = cylinders_to_mesh(dg)
+    return pp.mesh3d(mesh, faces)
 
 
 def make_multiple_cylinder3d(*args, **kwargs):
